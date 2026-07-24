@@ -1,0 +1,280 @@
+This is one of the most important sections in the chapter because it explains how the JVM "sees" its environment. Let's walk through it with a practical example.
+
+Scenario
+Suppose you own a server with:
+CPU: 4 cores
+RAM: 16 GB
+You want to run two Java applications.
+Instead of installing both directly on the server, you use Docker.
+Server
+│
+├── Docker Container A
+│      Java App A
+│
+└── Docker Container B
+       Java App B
+
+You decide to split resources equally.
+Container A
+CPU: 2 cores
+RAM: 8 GB
+Container B
+CPU: 2 cores
+RAM: 8 GB
+Docker can enforce these limits:
+docker run --cpus=2 --memory=8g my-java-app
+
+What the JVM Does
+When a Java program starts, it asks questions like:
+How much RAM do I have?
+How many CPUs do I have?
+The JVM uses this information to automatically configure:
+	• Heap size
+	• Garbage Collector threads
+	• JIT compiler threads
+	• ForkJoinPool size
+	• Various internal thread pools
+This automatic tuning is called JVM ergonomics.
+
+Java 11 (Container Aware)
+Suppose your container has:
+2 CPUs
+8 GB RAM
+The JVM sees exactly that.
+Available processors = 2
+Available memory = 8 GB
+So it might configure:
+Heap
+≈ 2 GB
+
+GC Threads
+2
+Compiler Threads
+2
+Everything is balanced.
+
+Old Java 8 (Before 8u192)
+This is where the problem starts.
+Although Docker limits the container to:
+2 CPUs
+8 GB
+the JVM ignores Docker and looks at the host machine.
+It thinks:
+Available CPUs = 4
+Available RAM = 16 GB
+So it might configure:
+Heap = 4 GB+
+GC Threads = 4
+Compiler Threads = 4
+But Docker still only allows:
+2 CPUs
+8 GB RAM
+
+Why This Is Bad
+Imagine your heap grows.
+JVM thinks:
+I can use 12 GB.
+Docker says:
+No.
+Maximum allowed = 8 GB.
+When memory exceeds the Docker limit:
+OOM Killer
+↓
+
+Container terminated
+↓
+
+Java process dies
+The JVM didn't crash because of Java—it was the operating system enforcing Docker's memory limit.
+
+Another Problem: Too Many GC Threads
+Suppose:
+Host:
+16 CPUs
+Container:
+2 CPUs
+Old JVM:
+GC Threads = 16
+Reality:
+Only 2 CPUs exist inside the container.
+Now 16 garbage collector threads compete for just 2 CPUs.
+Result:
+	• more context switching,
+	• wasted CPU time,
+	• lower throughput.
+
+Visual Example
+Correct (Java 11)
+Host
+--------------------
+4 CPUs
+16 GB
+↓
+
+Container
+2 CPUs
+8 GB
+↓
+
+JVM
+Uses:
+2 CPUs
+8 GB
+Everything matches.
+
+Incorrect (Old Java 8)
+Host
+--------------------
+4 CPUs
+16 GB
+↓
+
+Container
+2 CPUs
+8 GB
+↓
+
+JVM
+Uses:
+4 CPUs
+16 GB
+Mismatch!
+
+What Is Ergonomics?
+The book mentions ergonomics, which means the JVM automatically chooses sensible defaults based on the available hardware.
+Examples include:
+	• Initial heap size (-Xms)
+	• Maximum heap size (-Xmx)
+	• Number of GC threads
+	• JIT compiler thread count
+	• Common ForkJoinPool parallelism
+With modern Java, ergonomics also respects container limits.
+
+Can We Fix It in Old Java?
+Yes.
+You manually specify the values.
+Example:
+java \
+-Xmx4g \
+-Xms4g \
+-XX:ActiveProcessorCount=2 \
+-jar app.jar
+Now the JVM won't assume it has all 16 GB and 4 CPUs.
+The book recommends upgrading instead because newer JVMs automatically detect Docker limits and avoid these problems.
+
+One More Challenge: JVM Diagnostic Tools
+The author also notes that some JVM diagnostic tools may not work as easily inside containers.
+Tools like:
+	• jcmd
+	• jstack
+	• jmap
+	• jstat
+often require access to the running process or additional permissions. In Docker, you may need to:
+	• install the JDK (not just the JRE) in the container,
+	• run the container with appropriate permissions,
+	• or connect from outside the container using tools such as JMX or Java Flight Recorder.
+This is one reason observability in containerized Java applications often relies on external monitoring systems alongside JVM tools.
+The key takeaway: Modern Java (Java 11+, including Java 17 and Java 21) is container-aware. When you set CPU and memory limits on a Docker container, the JVM automatically sizes its heap and internal thread pools based on those limits, avoiding the resource mismatch that affected older Java 8 releases.
+
+
+Yes. Each running Java application inside a Docker container has its own JVM process.
+The important distinction is between a Docker image and a Docker container.
+	• Docker image = a template (like a class in Java).
+	• Docker container = a running instance of that image (like an object created from a class).
+A JVM exists only when a container is running a Java application.
+Example
+Suppose you have one Docker image:
+springboot-app:1.0
+You start two containers from it:
+docker run --name app1 springboot-app:1.0
+docker run --name app2 springboot-app:1.0
+Internally:
+Physical Machine
+--------------------------------
+Container 1
+------------
+JVM #1
+Spring Boot App
+Container 2
+------------
+JVM #2
+Spring Boot App
+Although both containers use the same image, each has:
+	• its own JVM
+	• its own heap
+	• its own garbage collector
+	• its own JIT compiler
+	• its own threads
+	• its own classloader
+They do not share these JVM internals.
+
+Why?
+A Docker container is essentially an isolated process.
+When you execute:
+java -jar app.jar
+the operating system creates a new process.
+If you execute it twice:
+java -jar app.jar
+java -jar app.jar
+you now have two independent JVM processes, even without Docker.
+Docker simply isolates those processes further.
+
+Multiple Java Applications
+Suppose you have:
+Container A
+------------
+JVM
+Inventory Service
+Container B
+------------
+JVM
+Order Service
+Container C
+------------
+JVM
+Payment Service
+Now you have:
+	• 3 JVMs
+	• 3 heaps
+	• 3 garbage collectors
+	• 3 JIT compilers
+Each JVM only manages its own application.
+
+Can Multiple Java Applications Share One JVM?
+Yes, but it's uncommon today.
+Historically, application servers like:
+	• Apache Tomcat (multiple web apps)
+	• JBoss / WildFly
+	• WebLogic
+	• WebSphere
+could host multiple applications inside a single JVM.
+Example:
+One JVM
+│
+├── App A
+├── App B
+└── App C
+
+If that JVM crashed, all applications went down together.
+
+Modern Microservices
+Today, the common pattern is:
+Container A
+└── JVM
+    └── User Service
+
+Container B
+└── JVM
+    └── Order Service
+
+Container C
+└── JVM
+    └── Payment Service
+
+This provides:
+	• independent deployments,
+	• separate memory management,
+	• isolated failures,
+	• individual scaling.
+This is why the book discusses how each JVM sizes its heap and thread pools based on the resources available to its own container. Each JVM performs that sizing independently.
+
