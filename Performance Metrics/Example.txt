@@ -1,0 +1,151 @@
+This is one of the most important concepts in performance engineering. Throughput and Response Time (Latency) measure different things.
+Let's use a real-world analogy first.
+
+Restaurant Example
+Imagine two restaurants.
+Restaurant A
+	• Serves 500 customers per hour
+	• Each customer waits 30 minutes
+Restaurant B
+	• Serves 300 customers per hour
+	• Each customer waits 10 minutes
+Which restaurant is better?
+It depends.
+If you're the restaurant owner, you probably prefer Restaurant A because it serves more customers and generates more revenue.
+If you're a customer, you'd probably choose Restaurant B because you get your food much faster.
+Exactly the same trade-off exists in software systems.
+
+Throughput
+Throughput answers:
+	How much work can the system finish per unit of time?
+Common units are:
+	• Requests per second (RPS)
+	• Transactions per second (TPS)
+	• Messages per second
+Example:
+500 requests/second
+means the server completes 500 requests every second.
+Higher throughput means the server can handle more users overall.
+
+Response Time (Latency)
+Response time answers:
+	How long does one user wait for a response?
+Example:
+300 ms
+means one request takes 0.3 seconds from arrival until the response is returned.
+Lower latency means a better experience for each individual user.
+
+Comparing the Two Servers
+Server	Throughput	Response Time
+A	500 RPS	500 ms
+B	300 RPS	300 ms
+
+Server A
+Every second:
+500 users
+↓
+Server processes all 500
+↓
+Each waits about 500 ms
+
+Advantages:
+	• Handles more traffic.
+	• Better resource utilization.
+	• Suitable for large-scale services.
+Disadvantage:
+	• Each user waits longer.
+
+Server B
+Every second:
+300 users
+↓
+Server processes all 300
+↓
+Each waits only 300 ms
+
+Advantages:
+	• Faster responses.
+	• Better user experience.
+Disadvantage:
+	• Cannot serve as many users.
+
+Which One Does Netflix Want?
+Imagine millions of users streaming videos.
+Netflix cares primarily about throughput because it must serve huge numbers of simultaneous requests.
+It also keeps latency low enough that users don't notice delays, but scalability is critical.
+
+Which One Does Google Search Want?
+You search:
+Spring Boot tutorial
+If Google took:
+500 ms
+it would feel noticeably slower.
+Google therefore prioritizes very low latency, even if that means sacrificing some maximum throughput.
+
+Which One Does a Bank Want?
+When you transfer ₹50,000:
+Would you rather have:
+100 ms
+or
+600 ms
+Most people prefer the faster response because they're waiting for confirmation.
+Banks therefore optimize for predictable, low latency while still supporting many concurrent users.
+
+Why You Can't Maximize Both
+Suppose your server has 8 CPU cores.
+Processing 300 RPS
+CPU Usage = 50%
+Requests finish quickly because CPUs are not busy.
+Latency is low.
+
+Now increase traffic.
+500 RPS
+CPU usage becomes:
+95%
+The server handles more requests, but incoming requests start waiting in queues.
+As queues grow:
+	• Response time increases.
+	• Throughput improves only until the server reaches capacity.
+
+At some point:
+CPU = 100%
+Additional requests don't increase throughput much—they mostly increase waiting time and may eventually be dropped.
+This is why latency often rises sharply as utilization approaches 100%.
+
+Formula
+A simplified relationship is:
+Throughput = Completed Requests / Second
+Response Time = Finish Time − Arrival Time
+
+Throughput measures system capacity, while response time measures individual request delay.
+
+In Java (Spring Boot)
+Imagine your REST API:
+@GetMapping("/users")
+public List<User> getUsers() {
+    return service.findAll();
+}
+Performance testing with a tool like JMeter or k6 might show:
+300 RPS
+Average latency: 120 ms
+After optimizing:
+	• Better database indexing
+	• Reduced object allocations
+	• More efficient thread pools
+Results become:
+500 RPS
+Average latency: 140 ms
+You've increased throughput by about 67%, but each request is slightly slower.
+Whether that's an improvement depends on your application's goals.
+
+Rule of Thumb
+Application	Priority
+Search engines	Low response time
+Video streaming	High throughput
+Payment systems	Low and predictable response time
+Batch processing	High throughput
+Real-time gaming	Extremely low response time
+Analytics pipelines	High throughput
+Key takeaway: Throughput tells you how much work your system can do, while response time tells you how quickly each user is served. A well-designed system balances both according to its requirements rather than maximizing one at the expense of the other.
+
+
