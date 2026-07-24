@@ -1,0 +1,234 @@
+Macrobenchmark 
+
+14 July 2026
+23:50
+
+This section explains why you should benchmark the complete application instead of individual methods or modules. The author calls this a macrobenchmark.
+Let's understand it with realistic backend examples.
+
+What is a Macrobenchmark?
+A macrobenchmark measures the entire system as it runs in production.
+For a Spring Boot application, this means testing:
+User
+   │
+   ▼
+Spring Boot
+   │
+   ▼
+Authentication (LDAP/OAuth)
+   │
+   ▼
+Business Logic
+   │
+   ▼
+Database
+   │
+   ▼
+Redis
+   │
+   ▼
+Response
+Everything participates in the benchmark.
+
+Why Not Test Only the Business Logic?
+Imagine your application:
+public Order placeOrder(OrderRequest request)
+Inside it:
+Receive Request
+↓
+
+Authenticate User
+↓
+
+Validate Order
+↓
+
+Read Product from Database
+↓
+
+Calculate Price
+↓
+
+Save Order
+↓
+
+Return Response
+Suppose you benchmark only:
+calculatePrice()
+It takes:
+2 ms
+You optimize it to:
+1 ms
+You think:
+	"Great! I made it 2× faster."
+But let's see the whole request.
+
+Real Request Timing
+Step	Time
+Authentication	20 ms
+Database Read	80 ms
+Price Calculation	2 ms
+Database Write	90 ms
+JSON Response	8 ms
+Total:
+200 ms
+
+Now you optimize price calculation.
+Step	Time
+Authentication	20 ms
+Database Read	80 ms
+Price Calculation	1 ms
+Database Write	90 ms
+JSON Response	8 ms
+Total:
+199 ms
+Users won't notice a 1 ms improvement because the database dominates.
+This is exactly what the author means: optimizing one module doesn't necessarily improve the whole system.
+
+The Pipeline Analogy
+Think of your application as a water pipeline.
+User
+↓
+
+Authentication
+↓
+
+Business Logic
+↓
+
+Database
+↓
+
+Response
+Each stage has a maximum capacity.
+Example:
+Module	Capacity
+Authentication	500 RPS
+Business Logic	200 RPS
+Database	100 RPS
+Response	300 RPS
+(RPS = Requests Per Second)
+
+The bottleneck is:
+Database
+100 RPS
+So the whole application can process only:
+100 requests/second
+
+What Happens If We Optimize the Wrong Module?
+Suppose you make Business Logic twice as fast.
+Before:
+Business Logic
+200 RPS
+After:
+Business Logic
+400 RPS
+The pipeline becomes:
+Authentication
+500
+↓
+
+Business Logic
+400
+↓
+
+Database
+100
+↓
+
+Response
+300
+Overall throughput is still:
+100 RPS
+The database is still the bottleneck.
+This is why the author says optimizing the business logic first provides no immediate benefit until the bottleneck is addressed.
+
+Why Mocking Can Be Misleading
+During unit testing you might replace the database with a fake implementation.
+Spring Boot
+↓
+
+Fake Database
+The benchmark looks amazing.
+But the real application is:
+Spring Boot
+↓
+
+Real PostgreSQL
+↓
+
+Network
+↓
+
+Disk
+↓
+
+Locks
+↓
+
+Buffers
+The benchmark no longer reflects production because it ignores:
+	• network latency,
+	• JDBC overhead,
+	• database buffers,
+	• connection pools,
+	• serialization.
+This is why macrobenchmarks should include real external services whenever possible.
+
+Multiple JVMs on One Machine
+This section connects to what you learned about Docker and JVM ergonomics.
+Suppose your server has:
+8 CPU cores
+You run:
+JVM A
+Spring Boot API
+Everything is fine.
+Now you also start:
+JVM B
+Background Worker
+and
+JVM C
+Analytics Service
+Now:
+Server
+8 CPUs
+│
+
+├── JVM A
+├── JVM B
+└── JVM C
+
+Each JVM thinks:
+	"I have access to all available CPUs."
+
+Garbage Collection Problem
+Suppose JVM A starts a major garbage collection.
+It tries to use all CPU cores.
+At the same time:
+	• JVM B is processing requests.
+	• JVM C is processing analytics.
+Now they all compete for the same CPUs.
+Instead of:
+JVM A
+100% CPU
+it may get only:
+40% CPU
+Garbage collection takes longer.
+Request latency increases.
+Performance differs from the isolated benchmark.
+That's why benchmarking a single JVM on an otherwise idle machine can produce results that don't match production.
+
+Interview Takeaway
+If asked:
+	Why is macrobenchmarking preferred over microbenchmarking?
+A strong answer is:
+	"A macrobenchmark measures the performance of the complete application under realistic conditions, including databases, networks, authentication services, and other external dependencies. It reveals the actual system bottlenecks and overall throughput. Microbenchmarks are useful for comparing small code fragments but may not reflect real production behavior because of JIT optimizations, garbage collection, and interactions with the rest of the application."
+
+Key Takeaways
+	• Macrobenchmark = benchmark the whole application, not just individual methods.
+	• The slowest component (the bottleneck) determines the maximum throughput of the entire system.
+	• Optimizing a fast component while ignoring the bottleneck often has little or no effect on user-perceived performance.
+	• Avoid excessive mocking when evaluating performance; include real databases, networks, and external services whenever practical.
+	• Test under production-like conditions, including multiple JVMs or containers if that's how the application is actually deployed.
+
+

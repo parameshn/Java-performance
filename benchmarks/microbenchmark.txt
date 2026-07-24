@@ -1,0 +1,215 @@
+This is the beginning of Chapter 2: An Approach to Performance Testing. The main lesson is:
+	Benchmark the real application whenever possible. Microbenchmarks are useful, but they are very easy to get wrong in Java because of the JIT compiler and garbage collection.
+Let's go through each section.
+
+1. Test the Real Application
+The author divides benchmarks into three categories:
+Type	What it tests	Example
+Microbenchmark	One small operation	Compare two sorting methods
+Mesobenchmark	A subsystem	Test only the caching layer
+Macrobenchmark	Entire application	Test a complete Spring Boot API
+The author says the closer your benchmark is to the real application, the more trustworthy the results are.
+
+2. What is a Microbenchmark?
+A microbenchmark measures one tiny piece of code.
+Example:
+StringBuilder vs StringBuffer
+or
+HashMap vs TreeMap
+or
+Recursive Fibonacci vs Iterative Fibonacci
+These are useful for understanding individual operations, but Java's runtime optimizations make them tricky to measure correctly.
+
+3. Problem 1: The JVM May Remove Your Code
+Suppose you write:
+long start = System.nanoTime();
+fib(50);
+long end = System.nanoTime();
+You expect Java to calculate Fibonacci.
+But the result isn't used.
+The JIT compiler notices:
+Result computed
+↓
+
+Never used
+↓
+
+Remove it
+This optimization is called Dead Code Elimination (DCE).
+Your benchmark may report almost 0 ns, not because Fibonacci is incredibly fast, but because the JVM optimized the work away.
+
+How to Fix It
+Use the result.
+Example:
+volatile long result;
+result = fib(50);
+Because the value is observed later, the compiler must keep the computation.
+
+4. Problem 2: Warm-Up
+Java doesn't compile methods immediately.
+Execution typically goes like this:
+First execution
+↓
+
+Interpreter
+↓
+
+Method becomes "hot"
+↓
+
+JIT Compiler
+↓
+
+Machine Code
+↓
+
+Fast execution
+If you benchmark only the first few calls, you're mostly measuring interpretation and compilation rather than steady-state performance.
+Correct Benchmark
+Run method
+↓
+
+Warm up JVM
+↓
+
+Start timer
+↓
+
+Run benchmark
+↓
+
+Stop timer
+
+5. Problem 3: Threaded Microbenchmarks
+Suppose you want to benchmark this:
+synchronized void increment() {
+    counter++;
+}
+You start 100 threads.
+You think you're measuring:
+increment()
+Actually you're measuring:
+Lock contention
+↓
+
+Context switching
+↓
+
+Thread scheduling
+Most of the execution time is spent waiting for the synchronized lock, not incrementing the counter. The benchmark no longer measures what you intended.
+
+6. Problem 4: Test Different Inputs
+Suppose you benchmark:
+fib(50)
+only.
+The compiler may recognize that it's always computing the same value and optimize aggressively.
+Instead:
+fib(20)
+fib(35)
+fib(50)
+fib(70)
+fib(100)
+or use a precomputed list of varying inputs. This gives a more realistic picture of performance.
+
+7. Don't Generate Random Numbers Inside the Benchmark
+This is a subtle but important mistake.
+Wrong
+for (...) {
+    fib(random.nextInt());
+}
+Now you're timing:
+Random number generation
++
+Fibonacci
+instead of Fibonacci alone.
+
+Correct
+Generate the random inputs before starting the timer:
+int[] inputs = ...
+// start timer
+for (...) {
+    fib(inputs[i]);
+}
+Now the measured time reflects only the Fibonacci computation.
+
+8. Benchmark Real Inputs
+Imagine your production system always calls:
+fib(10)
+But your benchmark uses:
+fib(1000)
+The benchmark results won't reflect real-world performance.
+The author emphasizes:
+	Benchmark the common case, not unrealistic edge cases.
+
+9. Code Behaves Differently in Production
+This is one of the chapter's biggest lessons.
+Suppose you benchmark:
+HashMap.get()
+in a tiny program.
+The JIT sees:
+Only one class
+Simple call stack
+Predictable behavior
+Now place the same code inside a Spring Boot application:
+Spring
+Hibernate
+Security
+Logging
+Jackson
+AOP
+The runtime environment changes, and the JIT may optimize the same method differently.
+
+10. Garbage Collection Can Change Results
+Imagine two implementations.
+Version A
+Fast
+Creates lots of objects
+Version B
+Slightly slower
+Creates very few objects
+In a tiny benchmark:
+Version A wins
+because young-generation garbage collections are cheap.
+In a busy server with many threads:
+Many objects survive
+↓
+
+Promoted to Old Generation
+↓
+
+Full GC
+↓
+
+Application pauses
+Now Version B may outperform Version A because it creates less garbage.
+
+11. Tiny Differences May Not Matter
+Suppose you improve an operation by:
+5 nanoseconds
+If it's called:
+1 billion times
+the improvement matters.
+If it's called:
+once per REST request
+you've probably spent time optimizing something users will never notice.
+Always optimize where the time is actually being spent.
+
+12. Use JMH
+Because writing reliable Java microbenchmarks is difficult, the OpenJDK team created the Java Microbenchmark Harness (JMH).
+JMH automatically handles many pitfalls, including:
+	• Warm-up iterations
+	• Multiple measurement iterations
+	• JVM forks
+	• Preventing dead code elimination
+	• More reliable timing
+You'll learn more about JMH later in the chapter.
+
+Key Takeaways
+	• Benchmark the real application whenever possible.
+	• Always warm up the JVM before measuring.
+	• Make sure the benchmark uses the computed result, or the JIT may remove the work.
+	• Test with realistic and varied inputs.
+	• Avoid including unrelated work (such as random number generation) in the timed section.
+	• Remember that production behavior can differ because of JIT decisions and garbage collection.
+	• Use JMH instead of writing your own microbenchmark framework. It exists specifically to avoid the common mistakes described in this chapter.
+
