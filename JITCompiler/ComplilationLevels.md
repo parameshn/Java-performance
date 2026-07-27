@@ -1,166 +1,149 @@
-## Common JIT Optimizations
+# Tiered Compilation Levels
 
-The JIT compiler improves performance by applying various optimizations while converting bytecode into native machine code. The C1 compiler performs simpler optimizations to improve startup time, while the C2 compiler performs more aggressive optimizations to maximize long-term performance.
+When **Tiered Compilation** is enabled, the compilation log shows the **tier level** at which each method is compiled. Although the JVM has only two JIT compilers—**C1** and **C2**—there are **five compilation levels** because the C1 compiler supports three compilation stages. :contentReference[oaicite:0]{index=0}
 
-| Optimization                  | Description                                                                                                                   |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| **Method Inlining**           | Replaces a method call with the method's body, eliminating method call overhead.                                              |
-| **Constant Folding**          | Evaluates constant expressions during compilation instead of at runtime.                                                      |
-| **Dead Code Elimination**     | Removes code whose results are never used.                                                                                    |
-| **Escape Analysis**           | Determines whether an object escapes a method or thread. If it does not, the JVM can optimize its allocation.                 |
-| **Scalar Replacement**        | Replaces an object with its individual fields, avoiding object allocation.                                                    |
-| **Loop Optimizations**        | Improves loops through techniques such as loop unrolling, moving invariant code outside the loop, and reducing bounds checks. |
-| **Lock Elimination**          | Removes unnecessary synchronization when an object is accessed by only one thread.                                            |
-| **Lock Coarsening**           | Combines multiple synchronization operations into a single larger lock to reduce locking overhead.                            |
-| **Register Allocation**       | Keeps frequently used variables in CPU registers instead of main memory.                                                      |
-| **Branch Prediction**         | Optimizes frequently executed branches based on runtime behavior.                                                             |
-| **Code Motion**               | Moves computations outside loops or frequently executed paths when safe.                                                      |
-| **Vectorization (SuperWord)** | Uses SIMD instructions to process multiple data elements with a single CPU instruction.                                       |
+## Compilation Levels
 
-## Optimization Examples
-
-### Method Inlining
-
-Instead of:
-
-```java
-int square(int x) {
-    return x * x;
-}
-
-int y = square(5);
-```
-
-The JIT may generate code equivalent to:
-
-```java
-int y = 5 * 5;
-```
-
-This removes the overhead of the method call.
+| Level | Compiler     | Description                                                                                                                                                 |
+| ----: | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **0** | Interpreter  | Executes bytecode and collects runtime profiling information. This level does not appear in the compilation log.                                            |
+| **1** | C1 (Simple)  | Performs fast compilation with basic optimizations. Used for simple or trivial methods, or when higher levels are unnecessary.                              |
+| **2** | C1 (Limited) | Uses invocation counters and back-edge (loop) counters for limited optimizations without full profiling. Often used when compiler queues are busy.          |
+| **3** | C1 (Full)    | Uses full profiling information and continues collecting runtime data for the C2 compiler. This is the most common first compilation level for hot methods. |
+| **4** | C2           | Produces highly optimized native code using the complete runtime profile collected by earlier stages.                                                       |
 
 ---
 
-### Constant Folding
+# Normal Compilation Path
 
-Instead of:
+Every method begins execution in the **interpreter (Level 0)**.
 
-```java
-int x = 10 * 20;
-```
+If the method becomes hot, it is first compiled by the **C1 compiler at Level 3**. While executing at Level 3, the JVM continues collecting profiling information.
 
-The JIT computes the result during compilation:
-
-```java
-int x = 200;
-```
-
----
-
-### Dead Code Elimination
-
-```java
-int x = 5;
-x = 10;
-System.out.println(x);
-```
-
-The first assignment is removed because its value is never used.
-
----
-
-### Escape Analysis
-
-```java
-Point p = new Point(1, 2);
-return p.x + p.y;
-```
-
-If the object never escapes the method, the JVM may avoid allocating it on the heap.
-
----
-
-### Scalar Replacement
-
-Instead of creating an object:
-
-```java
-Point p = new Point(1, 2);
-```
-
-The JVM may replace it with individual variables:
+If the method remains hot, the **C2 compiler** recompiles it at **Level 4**, replacing the previous C1 version.
 
 ```text
-x = 1
-y = 2
+Level 0 (Interpreter)
+        │
+        ▼
+Level 3 (Full C1)
+        │
+        ▼
+Level 4 (C2)
 ```
 
-No object allocation is required.
+When the Level 4 version becomes available, the previous Level 3 compiled code is marked **made not entrant**, allowing future calls to execute the faster C2 version. :contentReference[oaicite:1]{index=1}
 
 ---
 
-### Loop Optimizations
+# When the C2 Compiler Queue Is Busy
 
-```java
-for (int i = 0; i < arr.length; i++) {
-    sum += arr[i];
-}
-```
+If the **C2 compiler queue** is busy, the JVM does not wait for C2 compilation.
 
-The JVM may:
+Instead, the method is first compiled at **Level 2**, which relies only on **invocation counters** and **back-edge counters**.
 
-- Move invariant computations outside the loop.
-- Unroll the loop.
-- Reduce bounds checks.
-
----
-
-### Lock Elimination
-
-```java
-StringBuilder sb = new StringBuilder();
-```
-
-If the object is accessed by only one thread, unnecessary synchronization can be removed.
-
----
-
-### Register Allocation
-
-Instead of repeatedly accessing memory, frequently used variables are stored in CPU registers for faster access.
-
----
-
-### Branch Prediction
-
-```java
-if (x != null) {
-    process(x);
-}
-```
-
-If the condition is usually true, the compiled code is optimized for that execution path.
-
----
-
-### Vectorization (SuperWord)
-
-Instead of processing one element at a time:
+After more profiling information is collected, the method is promoted to **Level 3**, and finally to **Level 4** when the C2 compiler becomes available.
 
 ```text
-1 + 1
-2 + 2
-3 + 3
-4 + 4
+Level 0
+    │
+    ▼
+Level 2
+    │
+    ▼
+Level 3
+    │
+    ▼
+Level 4
 ```
 
-The CPU performs multiple operations simultaneously using SIMD instructions.
+This allows the method to execute as compiled code sooner instead of waiting in the C2 queue.
 
-## C1 vs C2 Optimizations
+---
 
-| C1 Compiler                    | C2 Compiler                                                      |
-| ------------------------------ | ---------------------------------------------------------------- |
-| Fast compilation               | Slower compilation                                               |
-| Basic optimizations            | Aggressive optimizations                                         |
-| Improves startup time          | Maximizes peak performance                                       |
-| Performs less runtime analysis | Uses extensive runtime profiling to apply advanced optimizations |
+# When the C1 Compiler Queue Is Busy
+
+If the **C1 compiler queue** is busy, a method may become eligible for C2 compilation before a Level 3 compilation occurs.
+
+In that situation, the JVM typically compiles the method at **Level 2** and then promotes it directly to **Level 4**.
+
+```text
+Level 0
+    │
+    ▼
+Level 2
+    │
+    ▼
+Level 4
+```
+
+This avoids delaying optimization because of a busy C1 compiler queue.
+
+---
+
+# Trivial Methods
+
+Very small or **trivial methods** usually do not benefit from aggressive optimization.
+
+Such methods may be compiled only at **Level 1**, where the C1 compiler performs simple optimizations.
+
+Similarly, if the C2 compiler cannot compile a method for some reason, the JVM may leave it at **Level 1** because further optimization would provide little benefit.
+
+---
+
+# Deoptimization
+
+If compiled code becomes invalid—for example, because compiler assumptions change—the JVM **deoptimizes** the method.
+
+The compiled code is discarded, execution falls back to the **interpreter (Level 0)**, and the JVM begins collecting profiling information again.
+
+If the method becomes hot once more, it follows the normal compilation process.
+
+```text
+Compiled Code
+      │
+      ▼
+Deoptimization
+      │
+      ▼
+Level 0 (Interpreter)
+      │
+      ▼
+Level 3
+      │
+      ▼
+Level 4
+```
+
+---
+
+# Performance Considerations
+
+Tiered Compilation is designed to balance **startup performance** and **peak performance**.
+
+The preferred compilation path for most hot methods is:
+
+```text
+Level 0
+    │
+    ▼
+Level 3
+    │
+    ▼
+Level 4
+```
+
+Occasional use of **Level 2** is normal. Frequent Level 2 compilations may indicate that the **C2 compiler queue** is busy.
+
+In most applications, the JVM automatically manages these compilation levels effectively, and manually tuning them provides little practical benefit. 
+
+---
+
+# Summary
+
+- Tiered Compilation consists of **five compilation levels** built on the **C1** and **C2** compilers.
+- Most hot methods follow the path **Level 0 → Level 3 → Level 4**.
+- **Level 2** is primarily an intermediate stage used when compiler queues are busy.
+- **Level 1** is mainly used for trivial methods or methods that do not require aggressive optimization.
+- During deoptimization, execution temporarily returns to **Level 0**, after which the JVM recompiles the method if it becomes hot again.
+- The JVM automatically chooses the appropriate compilation level, so manual tuning is rarely necessary.
